@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- キャッシュによる古画面表示を防止 -->
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -58,9 +57,9 @@
       <div id="room-badge" class="hidden bg-slate-700 px-3 py-1 rounded-full text-xs text-slate-300 font-mono">
         ROOM: <span id="current-room-id" class="text-emerald-400 font-bold">---</span>
       </div>
-      <!-- バージョン表記 (v1.0.5) -->
+      <!-- バージョン表記 (v1.0.6) -->
       <span class="bg-slate-900 border border-slate-700 text-amber-400 font-mono text-[10px] px-2 py-0.5 rounded-md font-bold">
-        v1.0.5
+        v1.0.6
       </span>
     </div>
   </header>
@@ -71,7 +70,7 @@
     <section id="screen-lobby" class="bg-slate-800/80 backdrop-blur border border-slate-700 rounded-2xl p-6 shadow-xl my-auto">
       <h2 class="text-2xl font-bold mb-4 text-center text-slate-100">ドラフトを開始・参加する</h2>
 
-      <!-- 前回入室した部屋の復帰ボタン (セッション保持) -->
+      <!-- セッション復帰ボタン -->
       <div id="rejoin-container" class="hidden mb-6 bg-slate-900/80 border border-emerald-500/40 p-4 rounded-xl flex items-center justify-between">
         <div>
           <span class="text-xs text-emerald-400 font-bold block">前回のセッションが残っています</span>
@@ -165,11 +164,13 @@
           </div>
         </div>
 
-        <!-- 重複発生アラート -->
+        <!-- 重複発生アラート (全員発表後に表示) -->
         <div id="stage-duplicate-alert" class="hidden absolute inset-0 bg-red-950/90 backdrop-blur border-4 border-red-500 flex flex-col justify-center items-center p-4 z-20">
           <div class="text-5xl animate-pulse-fast mb-2">🚨</div>
-          <h3 class="text-3xl font-black text-red-400 tracking-wider mb-1">指名重複発生！</h3>
-          <p class="text-sm text-red-200 mb-4"><span id="dup-pokemon-name" class="font-bold underline text-white">---</span> の獲得権をかけてくじ引きを行います</p>
+          <h3 class="text-2xl font-black text-red-400 tracking-wider mb-2">指名重複発生！</h3>
+          <p class="text-base text-white font-bold mb-4 text-center px-4" id="dup-detail-msg">
+            獲得権をかけて抽選を行います
+          </p>
           <button id="btn-start-lottery" class="hidden bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-6 py-3 rounded-xl shadow-lg transition">
             🗳️ 抽選くじを引く (ホスト専用)
           </button>
@@ -196,13 +197,13 @@
 
               <div class="text-center my-4 space-y-1">
                 <div class="text-xs text-slate-500 font-bold">選択希望選手・対象</div>
-                <div id="lottery-target-display" class="text-2xl font-black text-slate-900">ガブリアス</div>
+                <div id="lottery-target-display" class="text-2xl font-black text-slate-900">---</div>
               </div>
 
               <!-- 当選者表示 -->
               <div class="bg-amber-100/80 p-3 rounded-lg text-center my-4 border border-amber-300">
                 <div class="text-xs font-bold text-slate-500 mb-1">獲得権確定者</div>
-                <div id="winner-name-display" class="text-2xl font-black text-amber-900">ユー</div>
+                <div id="winner-name-display" class="text-2xl font-black text-amber-900">---</div>
               </div>
 
               <!-- 赤い角印「交渉権獲得」 -->
@@ -252,9 +253,9 @@
         </div>
       </div>
 
-      <!-- 獲得済みカード一覧（確定分のみ表示） -->
+      <!-- 獲得済みカード一覧（確定分 + 指名ステータス表示） -->
       <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/50 space-y-3">
-        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">確定済み獲得リスト</h3>
+        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">参加メンバー ＆ 獲得リスト</h3>
         <div id="team-grids" class="grid sm:grid-cols-4 gap-3"></div>
       </div>
 
@@ -271,7 +272,7 @@
   projectId: "drafttool-f2f9b",
   storageBucket: "drafttool-f2f9b.firebasestorage.app",
   messagingSenderId: "278017861725",
-  appId: "1:278017861725:web:02dc39753e8f254cd985b4"
+  appId: "1:278017861725:web:02dc39753e8f254cd985b4",
     };
 
     if (!firebase.apps.length) {
@@ -323,7 +324,6 @@
       }
     });
 
-    // セッション情報の保存
     function saveSession(roomId, userName, isHost) {
       localStorage.setItem('draft_last_session', JSON.stringify({ roomId, userName, isHost }));
     }
@@ -346,7 +346,7 @@
         maxPlayers: maxPlayers,
         round: 1,
         revealIndex: -1,
-        lotteryState: { status: 'idle', winner: '', target: '' },
+        lotteryState: { status: 'idle', winner: '', target: '', dupPlayers: [] },
         confirmedPicks: {},
         players: { [hostName]: { name: hostName, currentPick: '', isRerolling: false } }
       };
@@ -417,29 +417,49 @@
       });
     });
 
-    // 1人ずつ発表
+    // 1人ずつ発表（ハズレ再指名者もスムーズに循環発表）
     document.getElementById('btn-trigger-reveal').addEventListener('click', () => {
       if (!state.isHost || !state.roomData) return;
-      const playerKeys = Object.keys(state.roomData.players || {});
+      const players = state.roomData.players || {};
+      const playerKeys = Object.keys(players);
+      
       let nextIndex = (state.roomData.revealIndex ?? -1) + 1;
       if (nextIndex >= playerKeys.length) nextIndex = 0;
       
       db.ref(`rooms/${state.roomId}/revealIndex`).set(nextIndex);
     });
 
-    // ホスト: くじ引きをトリガー
+    // ホスト: くじ引きをトリガー (全員発表後に重複があれば動作)
     document.getElementById('btn-start-lottery').addEventListener('click', () => {
       if (!state.isHost || !state.roomData) return;
       const data = state.roomData;
-      const playerNames = Object.keys(data.players || {});
-      const currentAnnouncedPick = data.players[playerNames[data.revealIndex]]?.currentPick;
+      const players = data.players || {};
+      const playerNames = Object.keys(players);
 
-      const dupPlayers = playerNames.filter(name => data.players[name]?.currentPick === currentAnnouncedPick);
+      // 重複検出
+      let targetPick = '';
+      let dupPlayers = [];
+
+      for (let i = 0; i < playerNames.length; i++) {
+        const p1 = playerNames[i];
+        const pick1 = players[p1]?.currentPick;
+        if (!pick1) continue;
+
+        const dups = playerNames.filter(n => players[n]?.currentPick === pick1);
+        if (dups.length > 1) {
+          targetPick = pick1;
+          dupPlayers = dups;
+          break;
+        }
+      }
+
+      if (dupPlayers.length === 0) return alert('現在重複している指名はありません');
+
       const winner = dupPlayers[Math.floor(Math.random() * dupPlayers.length)];
 
       db.ref(`rooms/${state.roomId}/lotteryState`).set({
         status: 'drawing',
-        target: currentAnnouncedPick,
+        target: targetPick,
         winner: winner,
         dupPlayers: dupPlayers
       });
@@ -467,7 +487,8 @@
         round: data.round + 1,
         revealIndex: -1,
         confirmedPicks: confirmed,
-        'lotteryState/status': 'idle'
+        'lotteryState/status': 'idle',
+        'lotteryState/dupPlayers': []
       };
       Object.keys(players).forEach(name => {
         updates[`players/${name}/currentPick`] = '';
@@ -477,7 +498,7 @@
       db.ref(`rooms/${state.roomId}`).update(updates);
     });
 
-    // UI更新
+    // UI更新（完全同期）
     function updateUI(data) {
       document.getElementById('display-round-status').textContent = `第 ${data.round} 巡 選択希望選手`;
       
@@ -510,18 +531,36 @@
         stageAnnounce.classList.remove('hidden');
         announcePlayer.textContent = pName;
         announcePokemon.textContent = pick;
-
-        // 重複検出
-        const previousPicks = playerNames.slice(0, data.revealIndex).map(n => players[n]?.currentPick);
-        if (previousPicks.includes(pick) && pick !== '未登録' && (data.lotteryState?.status === 'idle' || !data.lotteryState)) {
-          document.getElementById('dup-pokemon-name').textContent = pick;
-          stageDupAlert.classList.remove('hidden');
-        } else {
-          stageDupAlert.classList.add('hidden');
-        }
       } else {
         stageWaiting.classList.remove('hidden');
         stageAnnounce.classList.add('hidden');
+      }
+
+      // 重複チェック: 全員発表完了時（revealIndex が最後）にまとめて重複判定
+      const isAllRevealed = data.revealIndex >= playerNames.length - 1;
+      let dupPickName = '';
+      let dupList = [];
+
+      if (isAllRevealed && (data.lotteryState?.status === 'idle' || !data.lotteryState)) {
+        for (let i = 0; i < playerNames.length; i++) {
+          const p1 = playerNames[i];
+          const pick1 = players[p1]?.currentPick;
+          if (!pick1) continue;
+
+          const dups = playerNames.filter(n => players[n]?.currentPick === pick1);
+          if (dups.length > 1) {
+            dupPickName = pick1;
+            dupList = dups;
+            break;
+          }
+        }
+      }
+
+      if (dupList.length > 1) {
+        document.getElementById('dup-detail-msg').innerHTML = 
+          `<span class="text-amber-300 font-black underline">${dupPickName}</span> の獲得権をかけて<br><span class="text-amber-400 font-bold">${dupList.join(' と ')}</span> で抽選！`;
+        stageDupAlert.classList.remove('hidden');
+      } else {
         stageDupAlert.classList.add('hidden');
       }
 
@@ -568,20 +607,34 @@
         paperElement.classList.add('closed');
       }
 
-      // 確定済みリストの更新
+      // 確定済みリスト ＆ 指名ステータス表示の更新
       const teamGrids = document.getElementById('team-grids');
       teamGrids.innerHTML = '';
       const confirmedPicks = data.confirmedPicks || {};
 
       playerNames.forEach(name => {
         const pPicks = confirmedPicks[name] || {};
-        const picksList = Object.keys(pPicks).map(r => `<li class="text-xs text-slate-300 font-bold">• ${pPicks[r]}</li>`).join('');
+        // 1位：〇〇、2位：〇〇 の形式でフォーマット
+        const picksList = Object.keys(pPicks).map((r, idx) => {
+          return `<li class="text-xs text-slate-200 font-medium"><span class="text-amber-400 font-bold">${idx + 1}位：</span>${pPicks[r]}</li>`;
+        }).join('');
+
+        // 指名登録ステータス badge
+        const hasPicked = !!players[name]?.currentPick;
+        const statusBadge = hasPicked 
+          ? `<span class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] px-1.5 py-0.5 rounded font-bold">登録OK!</span>`
+          : `<span class="bg-slate-800 text-slate-500 border border-slate-700 text-[10px] px-1.5 py-0.5 rounded">選択中...</span>`;
 
         const card = document.createElement('div');
-        card.className = 'bg-slate-900/80 p-3 rounded-xl border border-slate-700/80';
+        card.className = 'bg-slate-900/80 p-3 rounded-xl border border-slate-700/80 flex flex-col justify-between';
         card.innerHTML = `
-          <div class="text-xs font-bold text-amber-400 mb-2 pb-1 border-b border-slate-800">${name}</div>
-          <ul class="space-y-1">${picksList || '<li class="text-xs text-slate-600 font-italic">未確定</li>'}</ul>
+          <div>
+            <div class="flex justify-between items-center mb-2 pb-1 border-b border-slate-800">
+              <span class="text-xs font-bold text-amber-400">${name}</span>
+              ${statusBadge}
+            </div>
+            <ul class="space-y-1">${picksList || '<li class="text-xs text-slate-600 font-italic">獲得なし</li>'}</ul>
+          </div>
         `;
         teamGrids.appendChild(card);
       });
