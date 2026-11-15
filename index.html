@@ -3,9 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>カスタムドラフトツール</title>
+  <title>リアルタイム・カスタムドラフトツール</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
   <style>
     @keyframes pulse-fast { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
     .animate-pulse-fast { animation: pulse-fast 0.6s infinite; }
@@ -97,11 +100,11 @@
         </div>
         <div class="flex items-center gap-2">
           <span class="text-xs text-slate-400">参加状況:</span>
-          <span id="display-joined-count" class="font-bold text-slate-200">1 / 4 名</span>
+          <span id="display-joined-count" class="font-bold text-slate-200">1 名</span>
         </div>
       </div>
 
-      <!-- メイン ステージ（開示・アニメーション表示枠） -->
+      <!-- メイン ステージ -->
       <div id="main-stage" class="bg-slate-800/90 border-2 border-slate-700 rounded-2xl p-6 min-h-[220px] flex flex-col justify-center items-center text-center relative overflow-hidden shadow-2xl transition-all">
         
         <!-- 待ち受け状態 -->
@@ -114,7 +117,7 @@
         <!-- アナウンス演出 -->
         <div id="stage-announce" class="hidden space-y-3">
           <div class="text-xs uppercase tracking-widest text-amber-400 font-bold" id="announce-round-label">第 1 巡 選択希望選手</div>
-          <div class="text-3xl font-extrabold text-white" id="announce-player-name">ユー</div>
+          <div class="text-3xl font-extrabold text-white" id="announce-player-name">---</div>
           <div class="text-4xl font-black text-amber-300 py-2 tracking-wider bg-slate-900/80 px-6 py-3 rounded-xl border border-amber-500/30 shadow-inner" id="announce-pokemon-name">
             ？？？？？
           </div>
@@ -133,21 +136,19 @@
         <!-- 抽選アニメーション -->
         <div id="stage-lottery" class="hidden space-y-3 z-10">
           <div class="text-xs text-amber-400 font-bold">ガラポン抽選実行中...</div>
-          <div id="lottery-spinner" class="text-5xl font-black text-emerald-400 animate-pulse-fast my-2">
-            🎰
-          </div>
+          <div id="lottery-spinner" class="text-5xl font-black text-emerald-400 animate-pulse-fast my-2">🎰</div>
           <div id="lottery-winner-result" class="text-2xl font-bold text-white hidden">
             当選：<span id="winner-name" class="text-amber-300 font-black underline">---</span> !
           </div>
         </div>
       </div>
 
-      <!-- 入力・操作パネル -->
+      <!-- 操作パネル -->
       <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg space-y-4">
         
-        <!-- コントロールボタン -->
-        <div class="bg-amber-500/10 border border-amber-500/30 p-3 rounded-xl flex flex-wrap justify-between items-center gap-2">
-          <span class="text-xs font-bold text-amber-300">📣 ドラフト進行コントロール</span>
+        <!-- ホストコントロール -->
+        <div id="host-controls" class="hidden bg-amber-500/10 border border-amber-500/30 p-3 rounded-xl flex flex-wrap justify-between items-center gap-2">
+          <span class="text-xs font-bold text-amber-300">👑 ホスト専用操作</span>
           <div class="flex gap-2">
             <button id="btn-trigger-reveal" class="bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-xs px-4 py-2 rounded-lg transition shadow">
               📣 1人ずつ発表する
@@ -160,9 +161,7 @@
 
         <!-- 指名フォーム -->
         <div id="nomination-form" class="space-y-3">
-          <label class="block text-sm font-bold text-slate-200">
-            あなたの指名対象 (ポケモン名・選手名等)
-          </label>
+          <label class="block text-sm font-bold text-slate-200">あなたの指名対象</label>
           <div class="flex gap-2">
             <input type="text" id="input-pokemon" placeholder="例: ガブリアス / 大谷翔平" class="flex-1 bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-400">
             <button id="btn-submit-nomination" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold px-6 py-3 rounded-xl transition shadow-lg shrink-0">
@@ -176,9 +175,7 @@
       <!-- 獲得済みカード一覧 -->
       <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/50 space-y-3">
         <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">獲得済みリスト</h3>
-        <div id="team-grids" class="grid sm:grid-cols-4 gap-3">
-          <!-- JSで動的に追加 -->
-        </div>
+        <div id="team-grids" class="grid sm:grid-cols-4 gap-3"></div>
       </div>
 
     </section>
@@ -186,15 +183,27 @@
   </main>
 
   <script>
-    // アプリ状態
+    // ⚠️ ここにFirebaseで取得したキーを貼り付けます！
+    const firebaseConfig = {
+      apiKey: "AIzaSyAD5SLeKAj5az6gTnv5FYfKJm8e589YvRs",
+      authDomain: "drafttool-f2f9b.firebaseapp.com",
+      databaseURL: "https://drafttool-f2f9b-default-rtdb.firebaseio.com",
+      projectId: "drafttool-f2f9b",
+      storageBucket: "drafttool-f2f9b.firebasestorage.app",
+      messagingSenderId: "278017861725",
+      appId: "1:278017861725:web:02dc39753e8f254cd985b4"
+    };
+
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.database();
+
     let state = {
-      title: '',
-      maxPlayers: 4,
-      rule: 'lottery',
+      roomId: null,
       userName: '',
-      round: 1,
-      revealIndex: -1,
-      players: {}
+      isHost: false,
+      roomData: null
     };
 
     const screenLobby = document.getElementById('screen-lobby');
@@ -211,31 +220,43 @@
       const hostName = document.getElementById('input-host-name').value || 'ユー';
 
       const roomId = 'PGB-' + Math.floor(1000 + Math.random() * 9000);
-      
-      state.title = title;
-      state.maxPlayers = maxPlayers;
-      state.rule = rule;
+      state.roomId = roomId;
       state.userName = hostName;
-      state.players[hostName] = { name: hostName, picks: {} };
+      state.isHost = true;
 
-      // デモ用 ダミープレイヤーを自動追加（入力テスト用）
-      for (let i = 2; i <= maxPlayers; i++) {
-        const dName = `参加者${i}`;
-        state.players[dName] = { name: dName, picks: {} };
-      }
+      const roomData = {
+        title: title,
+        maxPlayers: maxPlayers,
+        rule: rule,
+        round: 1,
+        revealIndex: -1,
+        players: { [hostName]: { name: hostName, picks: {} } }
+      };
 
-      initDraftRoom(roomId, title);
+      db.ref('rooms/' + roomId).set(roomData).then(() => {
+        initDraftRoom(roomId, title);
+      });
     });
 
-    // 部屋入室（仮機能）
+    // 部屋入室
     document.getElementById('btn-join-room').addEventListener('click', () => {
-      const roomId = document.getElementById('input-join-room-id').value || 'PGB-1000';
-      const userName = document.getElementById('input-join-name').value || 'ゲスト';
+      const roomId = document.getElementById('input-join-room-id').value.trim().toUpperCase();
+      const userName = document.getElementById('input-join-name').value.trim();
 
-      state.title = 'ドラフト会議';
-      state.userName = userName;
-      state.players[userName] = { name: userName, picks: {} };
-      initDraftRoom(roomId, 'ドラフト会議');
+      if (!roomId || !userName) return alert('ルームIDと名前を入力してください');
+
+      db.ref('rooms/' + roomId).once('value', (snapshot) => {
+        const data = snapshot.val();
+        if (!data) return alert('部屋が見つかりません！IDを確認してください');
+
+        state.roomId = roomId;
+        state.userName = userName;
+        state.isHost = false;
+
+        db.ref(`rooms/${roomId}/players/${userName}`).set({ name: userName, picks: {} }).then(() => {
+          initDraftRoom(roomId, data.title);
+        });
+      });
     });
 
     function initDraftRoom(roomId, title) {
@@ -244,54 +265,59 @@
       roomBadge.classList.remove('hidden');
       currentRoomIdSpan.textContent = roomId;
       appTitleDisplay.textContent = title;
-      updateUI();
+
+      if (state.isHost) {
+        document.getElementById('host-controls').classList.remove('hidden');
+      }
+
+      // 💥 Firebaseリアルタイム同期！
+      db.ref('rooms/' + roomId).on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (!data) return;
+        state.roomData = data;
+        updateUI(data);
+      });
     }
 
-    // 指名登録ボタン
+    // 指名送信
     document.getElementById('btn-submit-nomination').addEventListener('click', () => {
       const pokemon = document.getElementById('input-pokemon').value.trim();
-      if (!pokemon) return alert('指名名を入力してください！');
+      if (!pokemon || !state.roomId) return;
 
-      state.players[state.userName].picks[`r${state.round}`] = pokemon;
-
-      // ダミープレイヤーにもランダムで指名を入力（テスト用）
-      const dummyPicks = ['ガブリアス', 'サーナイト', 'ルカリオ', 'ハッサム', 'カイリュー'];
-      Object.keys(state.players).forEach(pName => {
-        if (pName !== state.userName && !state.players[pName].picks[`r${state.round}`]) {
-          const randPick = dummyPicks[Math.floor(Math.random() * dummyPicks.length)];
-          state.players[pName].picks[`r${state.round}`] = randPick;
-        }
+      const currentRound = state.roomData ? state.roomData.round : 1;
+      db.ref(`rooms/${state.roomId}/players/${state.userName}/picks/r${currentRound}`).set(pokemon).then(() => {
+        const msg = document.getElementById('nomination-status-msg');
+        msg.textContent = '✅ 指名登録完了！全員の登録を待っています。';
+        msg.className = 'text-xs text-emerald-400 font-bold';
       });
-
-      const msg = document.getElementById('nomination-status-msg');
-      msg.textContent = '✅ 指名登録が完了しました！「1人ずつ発表する」を押して発表してください。';
-      msg.className = 'text-xs text-emerald-400 font-bold';
-      updateUI();
     });
 
-    // 1人ずつ発表ボタン
+    // ホスト操作: 1人ずつ発表
     document.getElementById('btn-trigger-reveal').addEventListener('click', () => {
-      const pKeys = Object.keys(state.players);
-      state.revealIndex = (state.revealIndex + 1) % pKeys.length;
-      updateUI();
+      if (!state.isHost || !state.roomData) return;
+      const playerKeys = Object.keys(state.roomData.players || {});
+      let nextIndex = (state.roomData.revealIndex ?? -1) + 1;
+      if (nextIndex >= playerKeys.length) nextIndex = 0;
+      
+      db.ref(`rooms/${state.roomId}/revealIndex`).set(nextIndex);
     });
 
-    // 次の巡目へ進む
+    // ホスト操作: 次の巡目へ
     document.getElementById('btn-next-round').addEventListener('click', () => {
-      state.round++;
-      state.revealIndex = -1;
-      document.getElementById('input-pokemon').value = '';
-      const msg = document.getElementById('nomination-status-msg');
-      msg.textContent = '※登録ボタンを押すまで発表画面には表示されません';
-      msg.className = 'text-xs text-slate-400';
-      updateUI();
+      if (!state.isHost || !state.roomData) return;
+      db.ref(`rooms/${state.roomId}`).update({
+        round: state.roomData.round + 1,
+        revealIndex: -1
+      });
     });
 
-    // 画面更新処理
-    function updateUI() {
-      document.getElementById('display-round-status').textContent = `第 ${state.round} 巡 選択希望選手`;
-      const playerNames = Object.keys(state.players);
-      document.getElementById('display-joined-count').textContent = `${playerNames.length} / ${state.maxPlayers} 名`;
+    // 画面同期UI更新
+    function updateUI(data) {
+      document.getElementById('display-round-status').textContent = `第 ${data.round} 巡 選択希望選手`;
+      
+      const players = data.players || {};
+      const playerNames = Object.keys(players);
+      document.getElementById('display-joined-count').textContent = `${playerNames.length} / ${data.maxPlayers} 名`;
 
       const stageWaiting = document.getElementById('stage-waiting');
       const stageAnnounce = document.getElementById('stage-announce');
@@ -299,9 +325,9 @@
       const announcePokemon = document.getElementById('announce-pokemon-name');
       const stageDupAlert = document.getElementById('stage-duplicate-alert');
 
-      if (state.revealIndex >= 0 && playerNames[state.revealIndex]) {
-        const pName = playerNames[state.revealIndex];
-        const pick = state.players[pName]?.picks?.[`r${state.round}`] || '未登録';
+      if (data.revealIndex >= 0 && playerNames[data.revealIndex]) {
+        const pName = playerNames[data.revealIndex];
+        const pick = players[pName]?.picks?.[`r${data.round}`] || '未入力';
 
         stageWaiting.classList.add('hidden');
         stageAnnounce.classList.remove('hidden');
@@ -309,8 +335,8 @@
         announcePokemon.textContent = pick;
 
         // 重複チェック
-        const previousPicks = playerNames.slice(0, state.revealIndex).map(n => state.players[n]?.picks?.[`r${state.round}`]);
-        if (previousPicks.includes(pick) && pick !== '未登録') {
+        const previousPicks = playerNames.slice(0, data.revealIndex).map(n => players[n]?.picks?.[`r${data.round}`]);
+        if (previousPicks.includes(pick) && pick !== '未入力') {
           document.getElementById('dup-pokemon-name').textContent = pick;
           stageDupAlert.classList.remove('hidden');
         } else {
@@ -326,7 +352,7 @@
       const teamGrids = document.getElementById('team-grids');
       teamGrids.innerHTML = '';
       playerNames.forEach(name => {
-        const pPicks = state.players[name].picks || {};
+        const pPicks = players[name].picks || {};
         const picksList = Object.keys(pPicks).map(r => `<li class="text-xs text-slate-300 font-bold">• ${pPicks[r]}</li>`).join('');
 
         const card = document.createElement('div');
@@ -339,7 +365,7 @@
       });
     }
 
-    // 抽選開始
+    // 抽選
     document.getElementById('btn-start-lottery').addEventListener('click', () => {
       const stageDupAlert = document.getElementById('stage-duplicate-alert');
       const stageLottery = document.getElementById('stage-lottery');
@@ -354,7 +380,7 @@
       setTimeout(() => {
         spinner.classList.add('hidden');
         winnerResult.classList.remove('hidden');
-        const players = Object.keys(state.players);
+        const players = Object.keys(state.roomData.players || {});
         const winner = players[Math.floor(Math.random() * players.length)];
         document.getElementById('winner-name').textContent = winner;
       }, 2000);
