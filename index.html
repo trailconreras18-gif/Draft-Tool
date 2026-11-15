@@ -12,6 +12,33 @@
   <style>
     @keyframes pulse-fast { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
     .animate-pulse-fast { animation: pulse-fast 0.6s infinite; }
+
+    /* ドラフトくじ開封 3D アニメーション */
+    .paper-container {
+      perspective: 1000px;
+    }
+    .draft-paper {
+      transform-style: preserve-3d;
+      transition: transform 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-origin: top center;
+    }
+    .draft-paper.closed {
+      transform: rotateX(-160deg);
+    }
+    .draft-paper.open {
+      transform: rotateX(0deg);
+    }
+    /* 角印風スタンプ */
+    .stamp-seal {
+      border: 3px solid #dc2626;
+      color: #dc2626;
+      font-weight: 900;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transform: rotate(-12deg);
+      display: inline-block;
+      box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
+    }
   </style>
 </head>
 <body class="bg-slate-900 text-white min-h-screen font-sans flex flex-col">
@@ -31,7 +58,18 @@
 
     <!-- 1. ルーム作成 / 入室 画面 -->
     <section id="screen-lobby" class="bg-slate-800/80 backdrop-blur border border-slate-700 rounded-2xl p-6 shadow-xl my-auto">
-      <h2 class="text-2xl font-bold mb-6 text-center text-slate-100">ドラフトを開始・参加する</h2>
+      <h2 class="text-2xl font-bold mb-4 text-center text-slate-100">ドラフトを開始・参加する</h2>
+
+      <!-- 前回入室した部屋の復帰ボタン (セッション保持) -->
+      <div id="rejoin-container" class="hidden mb-6 bg-slate-900/80 border border-emerald-500/40 p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <span class="text-xs text-emerald-400 font-bold block">前回のセッションが残っています</span>
+          <span id="rejoin-info-text" class="text-sm font-bold text-slate-200">ROOM: ---</span>
+        </div>
+        <button id="btn-rejoin-room" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-lg transition shadow-lg">
+          最後に入ったルームに復帰する ➔
+        </button>
+      </div>
       
       <div class="grid md:grid-cols-2 gap-8">
         <!-- 部屋を作る -->
@@ -50,13 +88,6 @@
               <option value="3">3名</option>
               <option value="4" selected>4名</option>
               <option value="5">5名</option>
-            </select>
-
-            <label class="block text-xs text-slate-400 mb-1">指名形式</label>
-            <select id="input-rule" class="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 text-sm text-white mb-4 focus:outline-none focus:border-emerald-400">
-              <option value="lottery">入札・重複時抽選方式</option>
-              <option value="waiver">ウェーバー方式 (順序固定)</option>
-              <option value="snake">スネーク方式 (折り返し)</option>
             </select>
 
             <label class="block text-xs text-slate-400 mb-1">あなたの名前</label>
@@ -105,7 +136,7 @@
       </div>
 
       <!-- メイン ステージ -->
-      <div id="main-stage" class="bg-slate-800/90 border-2 border-slate-700 rounded-2xl p-6 min-h-[220px] flex flex-col justify-center items-center text-center relative overflow-hidden shadow-2xl transition-all">
+      <div id="main-stage" class="bg-slate-800/90 border-2 border-slate-700 rounded-2xl p-6 min-h-[260px] flex flex-col justify-center items-center text-center relative overflow-hidden shadow-2xl transition-all">
         
         <!-- 待ち受け状態 -->
         <div id="stage-waiting" class="space-y-2">
@@ -127,20 +158,58 @@
         <div id="stage-duplicate-alert" class="hidden absolute inset-0 bg-red-950/90 backdrop-blur border-4 border-red-500 flex flex-col justify-center items-center p-4 z-20">
           <div class="text-5xl animate-pulse-fast mb-2">🚨</div>
           <h3 class="text-3xl font-black text-red-400 tracking-wider mb-1">指名重複発生！</h3>
-          <p class="text-sm text-red-200 mb-4"><span id="dup-pokemon-name" class="font-bold underline text-white">---</span> の獲得権をかけてガラポン抽選を行います</p>
-          <button id="btn-start-lottery" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-6 py-3 rounded-xl shadow-lg transition">
-            🎲 抽選を開始する
+          <p class="text-sm text-red-200 mb-4"><span id="dup-pokemon-name" class="font-bold underline text-white">---</span> の獲得権をかけてくじ引きを行います</p>
+          <button id="btn-start-lottery" class="hidden bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-6 py-3 rounded-xl shadow-lg transition">
+            🗳️ 抽選くじを引く (ホスト専用)
           </button>
+          <p id="lottery-wait-msg" class="text-xs text-amber-300 font-bold">ホストがくじを引き抜くのを待っています...</p>
         </div>
 
-        <!-- 抽選アニメーション -->
-        <div id="stage-lottery" class="hidden space-y-3 z-10">
-          <div class="text-xs text-amber-400 font-bold">ガラポン抽選実行中...</div>
-          <div id="lottery-spinner" class="text-5xl font-black text-emerald-400 animate-pulse-fast my-2">🎰</div>
-          <div id="lottery-winner-result" class="text-2xl font-bold text-white hidden">
-            当選：<span id="winner-name" class="text-amber-300 font-black underline">---</span> !
+        <!-- 本格ドラフトくじ開封モーダル (全員リアルタイム同期) -->
+        <div id="stage-lottery" class="hidden absolute inset-0 bg-slate-950/95 backdrop-blur z-30 flex flex-col justify-center items-center p-4">
+          
+          <!-- くじを引くアニメーション中 -->
+          <div id="lottery-drawing-phase" class="space-y-4">
+            <div class="text-6xl animate-bounce">🗳️</div>
+            <p class="text-amber-400 font-bold text-lg animate-pulse-fast">抽選箱からくじを引き抜いています...</p>
           </div>
+
+          <!-- くじ開封 演出 -->
+          <div id="lottery-paper-phase" class="hidden paper-container w-full max-w-sm">
+            <!-- ドラフト用紙 -->
+            <div id="draft-paper-element" class="draft-paper closed bg-amber-50 text-slate-900 rounded-xl p-6 shadow-2xl border-2 border-amber-200 relative overflow-hidden">
+              
+              <div class="text-xs font-bold text-slate-400 border-b border-amber-200 pb-2 mb-4 tracking-widest text-center">
+                NPB DRAFT SELECTION
+              </div>
+
+              <div class="text-center my-4 space-y-1">
+                <div class="text-xs text-slate-500 font-bold">選択希望選手・対象</div>
+                <div id="lottery-target-display" class="text-2xl font-black text-slate-900">ガブリアス</div>
+              </div>
+
+              <!-- 当選者表示 -->
+              <div class="bg-amber-100/80 p-3 rounded-lg text-center my-4 border border-amber-300">
+                <div class="text-xs font-bold text-slate-500 mb-1">獲得権確定者</div>
+                <div id="winner-name-display" class="text-2xl font-black text-amber-900">ユー</div>
+              </div>
+
+              <!-- 赤い角印「交渉権獲得」 -->
+              <div class="flex justify-end mt-4">
+                <div class="stamp-seal">
+                  交渉権獲得
+                </div>
+              </div>
+
+            </div>
+            
+            <p id="loser-notice" class="hidden text-xs text-red-400 font-bold text-center mt-4">
+              ※外れた方はハズレ再指名を入力してください
+            </p>
+          </div>
+
         </div>
+
       </div>
 
       <!-- 操作パネル -->
@@ -153,15 +222,15 @@
             <button id="btn-trigger-reveal" class="bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold text-xs px-4 py-2 rounded-lg transition shadow">
               📣 1人ずつ発表する
             </button>
-            <button id="btn-next-round" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-lg transition shadow">
-              ▶ 次の巡目へ進む
+            <button id="btn-confirm-round" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-lg transition shadow">
+              ✅ この巡目を確定して次へ進む
             </button>
           </div>
         </div>
 
         <!-- 指名フォーム -->
         <div id="nomination-form" class="space-y-3">
-          <label class="block text-sm font-bold text-slate-200">あなたの指名対象</label>
+          <label class="block text-sm font-bold text-slate-200" id="form-label">あなたの指名対象</label>
           <div class="flex gap-2">
             <input type="text" id="input-pokemon" placeholder="例: ガブリアス / 大谷翔平" class="flex-1 bg-slate-900 border border-slate-600 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-amber-400">
             <button id="btn-submit-nomination" class="bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold px-6 py-3 rounded-xl transition shadow-lg shrink-0">
@@ -172,9 +241,9 @@
         </div>
       </div>
 
-      <!-- 獲得済みカード一覧 -->
+      <!-- 獲得済みカード一覧（確定分のみ表示） -->
       <div class="bg-slate-800/60 p-5 rounded-2xl border border-slate-700/50 space-y-3">
-        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">獲得済みリスト</h3>
+        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider">確定済み獲得リスト</h3>
         <div id="team-grids" class="grid sm:grid-cols-4 gap-3"></div>
       </div>
 
@@ -183,15 +252,15 @@
   </main>
 
   <script>
-    // ⚠️ ここにFirebaseで取得したキーを貼り付けます！
+    // ⚠️ ユーくんのFirebaseキーをここに貼り付けてね！
     const firebaseConfig = {
-      apiKey: "AIzaSyAD5SLeKAj5az6gTnv5FYfKJm8e589YvRs",
-      authDomain: "drafttool-f2f9b.firebaseapp.com",
-      databaseURL: "https://drafttool-f2f9b-default-rtdb.firebaseio.com",
-      projectId: "drafttool-f2f9b",
-      storageBucket: "drafttool-f2f9b.firebasestorage.app",
-      messagingSenderId: "278017861725",
-      appId: "1:278017861725:web:02dc39753e8f254cd985b4"
+		apiKey: "AIzaSyAD5SLeKAj5az6gTnv5FYfKJm8e589YvRs",
+		authDomain: "drafttool-f2f9b.firebaseapp.com",
+		databaseURL: "https://drafttool-f2f9b-default-rtdb.firebaseio.com",
+		projectId: "drafttool-f2f9b",
+		storageBucket: "drafttool-f2f9b.firebasestorage.app",
+		messagingSenderId: "278017861725",
+		appId: "1:278017861725:web:02dc39753e8f254cd985b4"
     };
 
     if (!firebase.apps.length) {
@@ -212,11 +281,46 @@
     const currentRoomIdSpan = document.getElementById('current-room-id');
     const appTitleDisplay = document.getElementById('app-title-display');
 
+    // 画面読み込み時にローカルストレージ（セッション）を確認
+    window.addEventListener('DOMContentLoaded', () => {
+      const savedSession = localStorage.getItem('draft_last_session');
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession);
+          if (session.roomId && session.userName) {
+            document.getElementById('rejoin-container').classList.remove('hidden');
+            document.getElementById('rejoin-info-text').textContent = `ROOM: ${session.roomId} (${session.userName}さん)`;
+            
+            document.getElementById('btn-rejoin-room').onclick = () => {
+              state.roomId = session.roomId;
+              state.userName = session.userName;
+              state.isHost = session.isHost || false;
+              
+              db.ref('rooms/' + session.roomId).once('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                  initDraftRoom(session.roomId, data.title);
+                } else {
+                  alert('前回の部屋が見つかりませんでした');
+                  localStorage.removeItem('draft_last_session');
+                  document.getElementById('rejoin-container').classList.add('hidden');
+                }
+              });
+            };
+          }
+        } catch (e) {}
+      }
+    });
+
+    // セッション情報の保存
+    function saveSession(roomId, userName, isHost) {
+      localStorage.setItem('draft_last_session', JSON.stringify({ roomId, userName, isHost }));
+    }
+
     // 部屋作成
     document.getElementById('btn-create-room').addEventListener('click', () => {
       const title = document.getElementById('input-title').value || 'ドラフト会議';
       const maxPlayers = parseInt(document.getElementById('input-max-players').value);
-      const rule = document.getElementById('input-rule').value;
       const hostName = document.getElementById('input-host-name').value || 'ユー';
 
       const roomId = 'PGB-' + Math.floor(1000 + Math.random() * 9000);
@@ -224,13 +328,16 @@
       state.userName = hostName;
       state.isHost = true;
 
+      saveSession(roomId, hostName, true);
+
       const roomData = {
         title: title,
         maxPlayers: maxPlayers,
-        rule: rule,
         round: 1,
         revealIndex: -1,
-        players: { [hostName]: { name: hostName, picks: {} } }
+        lotteryState: { status: 'idle', winner: '', target: '' },
+        confirmedPicks: {},
+        players: { [hostName]: { name: hostName, currentPick: '', isRerolling: false } }
       };
 
       db.ref('rooms/' + roomId).set(roomData).then(() => {
@@ -253,7 +360,9 @@
         state.userName = userName;
         state.isHost = false;
 
-        db.ref(`rooms/${roomId}/players/${userName}`).set({ name: userName, picks: {} }).then(() => {
+        saveSession(roomId, userName, false);
+
+        db.ref(`rooms/${roomId}/players/${userName}`).set({ name: userName, currentPick: '', isRerolling: false }).then(() => {
           initDraftRoom(roomId, data.title);
         });
       });
@@ -268,9 +377,11 @@
 
       if (state.isHost) {
         document.getElementById('host-controls').classList.remove('hidden');
+        document.getElementById('btn-start-lottery').classList.remove('hidden');
+        document.getElementById('lottery-wait-msg').classList.add('hidden');
       }
 
-      // 💥 Firebaseリアルタイム同期！
+      // リアルタイム同期
       db.ref('rooms/' + roomId).on('value', (snapshot) => {
         const data = snapshot.val();
         if (!data) return;
@@ -279,20 +390,23 @@
       });
     }
 
-    // 指名送信
+    // 指名登録
     document.getElementById('btn-submit-nomination').addEventListener('click', () => {
       const pokemon = document.getElementById('input-pokemon').value.trim();
       if (!pokemon || !state.roomId) return;
 
-      const currentRound = state.roomData ? state.roomData.round : 1;
-      db.ref(`rooms/${state.roomId}/players/${state.userName}/picks/r${currentRound}`).set(pokemon).then(() => {
+      db.ref(`rooms/${state.roomId}/players/${state.userName}`).update({
+        currentPick: pokemon,
+        isRerolling: false
+      }).then(() => {
         const msg = document.getElementById('nomination-status-msg');
         msg.textContent = '✅ 指名登録完了！全員の登録を待っています。';
         msg.className = 'text-xs text-emerald-400 font-bold';
+        document.getElementById('input-pokemon').value = '';
       });
     });
 
-    // ホスト操作: 1人ずつ発表
+    // 1人ずつ発表
     document.getElementById('btn-trigger-reveal').addEventListener('click', () => {
       if (!state.isHost || !state.roomData) return;
       const playerKeys = Object.keys(state.roomData.players || {});
@@ -302,16 +416,59 @@
       db.ref(`rooms/${state.roomId}/revealIndex`).set(nextIndex);
     });
 
-    // ホスト操作: 次の巡目へ
-    document.getElementById('btn-next-round').addEventListener('click', () => {
+    // ホスト: くじ引きをトリガー (全員リアルタイム同期)
+    document.getElementById('btn-start-lottery').addEventListener('click', () => {
       if (!state.isHost || !state.roomData) return;
-      db.ref(`rooms/${state.roomId}`).update({
-        round: state.roomData.round + 1,
-        revealIndex: -1
+      const data = state.roomData;
+      const playerNames = Object.keys(data.players || {});
+      const currentAnnouncedPick = data.players[playerNames[data.revealIndex]]?.currentPick;
+
+      const dupPlayers = playerNames.filter(name => data.players[name]?.currentPick === currentAnnouncedPick);
+      const winner = dupPlayers[Math.floor(Math.random() * dupPlayers.length)];
+
+      // 1. くじ引きアニメーション開始
+      db.ref(`rooms/${state.roomId}/lotteryState`).set({
+        status: 'drawing',
+        target: currentAnnouncedPick,
+        winner: winner,
+        dupPlayers: dupPlayers
       });
+
+      // 2. 1.8秒後に紙が開く演出へ
+      setTimeout(() => {
+        db.ref(`rooms/${state.roomId}/lotteryState/status`).set('opening');
+      }, 1800);
     });
 
-    // 画面同期UI更新
+    // ホスト: 巡目確定
+    document.getElementById('btn-confirm-round').addEventListener('click', () => {
+      if (!state.isHost || !state.roomData) return;
+      const data = state.roomData;
+      const players = data.players || {};
+      const confirmed = data.confirmedPicks || {};
+
+      Object.keys(players).forEach(name => {
+        if (!confirmed[name]) confirmed[name] = {};
+        if (players[name].currentPick) {
+          confirmed[name][`r${data.round}`] = players[name].currentPick;
+        }
+      });
+
+      const updates = {
+        round: data.round + 1,
+        revealIndex: -1,
+        confirmedPicks: confirmed,
+        'lotteryState/status': 'idle'
+      };
+      Object.keys(players).forEach(name => {
+        updates[`players/${name}/currentPick`] = '';
+        updates[`players/${name}/isRerolling`] = false;
+      });
+
+      db.ref(`rooms/${state.roomId}`).update(updates);
+    });
+
+    // UI更新（完全同期）
     function updateUI(data) {
       document.getElementById('display-round-status').textContent = `第 ${data.round} 巡 選択希望選手`;
       
@@ -319,24 +476,35 @@
       const playerNames = Object.keys(players);
       document.getElementById('display-joined-count').textContent = `${playerNames.length} / ${data.maxPlayers} 名`;
 
+      const myData = players[state.userName];
+      if (myData && myData.isRerolling) {
+        document.getElementById('form-label').textContent = '⚠️ ハズレ再指名を入力してください';
+        document.getElementById('form-label').className = 'block text-sm font-bold text-red-400';
+      } else {
+        document.getElementById('form-label').textContent = 'あなたの指名対象';
+        document.getElementById('form-label').className = 'block text-sm font-bold text-slate-200';
+      }
+
+      // ステージ演出
       const stageWaiting = document.getElementById('stage-waiting');
       const stageAnnounce = document.getElementById('stage-announce');
       const announcePlayer = document.getElementById('announce-player-name');
       const announcePokemon = document.getElementById('announce-pokemon-name');
       const stageDupAlert = document.getElementById('stage-duplicate-alert');
+      const stageLottery = document.getElementById('stage-lottery');
 
       if (data.revealIndex >= 0 && playerNames[data.revealIndex]) {
         const pName = playerNames[data.revealIndex];
-        const pick = players[pName]?.picks?.[`r${data.round}`] || '未入力';
+        const pick = players[pName]?.currentPick || '未登録';
 
         stageWaiting.classList.add('hidden');
         stageAnnounce.classList.remove('hidden');
         announcePlayer.textContent = pName;
         announcePokemon.textContent = pick;
 
-        // 重複チェック
-        const previousPicks = playerNames.slice(0, data.revealIndex).map(n => players[n]?.picks?.[`r${data.round}`]);
-        if (previousPicks.includes(pick) && pick !== '未入力') {
+        // 重複検出
+        const previousPicks = playerNames.slice(0, data.revealIndex).map(n => players[n]?.currentPick);
+        if (previousPicks.includes(pick) && pick !== '未登録' && (data.lotteryState?.status === 'idle' || !data.lotteryState)) {
           document.getElementById('dup-pokemon-name').textContent = pick;
           stageDupAlert.classList.remove('hidden');
         } else {
@@ -348,43 +516,69 @@
         stageDupAlert.classList.add('hidden');
       }
 
-      // チームカード更新
+      // くじ引きリアルタイム演出
+      const lotState = data.lotteryState || {};
+      const drawingPhase = document.getElementById('lottery-drawing-phase');
+      const paperPhase = document.getElementById('lottery-paper-phase');
+      const paperElement = document.getElementById('draft-paper-element');
+
+      if (lotState.status === 'drawing') {
+        stageLottery.classList.remove('hidden');
+        drawingPhase.classList.remove('hidden');
+        paperPhase.classList.add('hidden');
+      } else if (lotState.status === 'opening') {
+        stageLottery.classList.remove('hidden');
+        drawingPhase.classList.add('hidden');
+        paperPhase.classList.remove('hidden');
+
+        document.getElementById('lottery-target-display').textContent = lotState.target || '---';
+        document.getElementById('winner-name-display').textContent = lotState.winner || '---';
+
+        // 3D用紙オープン演出
+        setTimeout(() => {
+          paperElement.classList.remove('closed');
+          paperElement.classList.add('open');
+        }, 100);
+
+        // 外れたプレイヤーを再指名モードへ
+        if (state.isHost && lotState.dupPlayers) {
+          lotState.dupPlayers.forEach(pName => {
+            if (pName !== lotState.winner) {
+              db.ref(`rooms/${state.roomId}/players/${pName}`).update({
+                currentPick: '',
+                isRerolling: true
+              });
+            }
+          });
+        }
+
+        if (myData && myData.isRerolling) {
+          document.getElementById('loser-notice').classList.remove('hidden');
+        }
+      } else {
+        stageLottery.classList.add('hidden');
+        paperElement.classList.remove('open');
+        paperElement.classList.add('closed');
+      }
+
+      // 確定済みリストの更新
       const teamGrids = document.getElementById('team-grids');
       teamGrids.innerHTML = '';
+      const confirmedPicks = data.confirmedPicks || {};
+
       playerNames.forEach(name => {
-        const pPicks = players[name].picks || {};
+        const pPicks = confirmedPicks[name] || {};
         const picksList = Object.keys(pPicks).map(r => `<li class="text-xs text-slate-300 font-bold">• ${pPicks[r]}</li>`).join('');
 
         const card = document.createElement('div');
         card.className = 'bg-slate-900/80 p-3 rounded-xl border border-slate-700/80';
         card.innerHTML = `
           <div class="text-xs font-bold text-amber-400 mb-2 pb-1 border-b border-slate-800">${name}</div>
-          <ul class="space-y-1">${picksList || '<li class="text-xs text-slate-600">獲得なし</li>'}</ul>
+          <ul class="space-y-1">${picksList || '<li class="text-xs text-slate-600 font-italic">未確定</li>'}</ul>
         `;
         teamGrids.appendChild(card);
       });
     }
-
-    // 抽選
-    document.getElementById('btn-start-lottery').addEventListener('click', () => {
-      const stageDupAlert = document.getElementById('stage-duplicate-alert');
-      const stageLottery = document.getElementById('stage-lottery');
-      const spinner = document.getElementById('lottery-spinner');
-      const winnerResult = document.getElementById('lottery-winner-result');
-
-      stageDupAlert.classList.add('hidden');
-      stageLottery.classList.remove('hidden');
-      spinner.classList.remove('hidden');
-      winnerResult.classList.add('hidden');
-
-      setTimeout(() => {
-        spinner.classList.add('hidden');
-        winnerResult.classList.remove('hidden');
-        const players = Object.keys(state.roomData.players || {});
-        const winner = players[Math.floor(Math.random() * players.length)];
-        document.getElementById('winner-name').textContent = winner;
-      }, 2000);
-    });
   </script>
 </body>
 </html>
