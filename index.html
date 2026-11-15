@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- キャッシュによる古画面表示を防止 -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  
   <title>リアルタイム・カスタムドラフトツール</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -28,7 +33,7 @@
     .draft-paper.open {
       transform: rotateX(0deg);
     }
-    /* 角印風スタンプ */
+    /* 赤い角印「交渉権獲得」 */
     .stamp-seal {
       border: 3px solid #dc2626;
       color: #dc2626;
@@ -49,8 +54,14 @@
       <span class="text-2xl">⚾</span>
       <h1 id="app-title-display" class="font-bold text-xl tracking-wide text-amber-400">ドラフトツール</h1>
     </div>
-    <div id="room-badge" class="hidden bg-slate-700 px-3 py-1 rounded-full text-xs text-slate-300 font-mono">
-      ROOM: <span id="current-room-id" class="text-emerald-400 font-bold">---</span>
+    <div class="flex items-center gap-2">
+      <div id="room-badge" class="hidden bg-slate-700 px-3 py-1 rounded-full text-xs text-slate-300 font-mono">
+        ROOM: <span id="current-room-id" class="text-emerald-400 font-bold">---</span>
+      </div>
+      <!-- バージョン表記 (v1.0.5) -->
+      <span class="bg-slate-900 border border-slate-700 text-amber-400 font-mono text-[10px] px-2 py-0.5 rounded-md font-bold">
+        v1.0.5
+      </span>
     </div>
   </header>
 
@@ -254,13 +265,13 @@
   <script>
     // ⚠️ ユーくんのFirebaseキーをここに貼り付けてね！
     const firebaseConfig = {
-		apiKey: "AIzaSyAD5SLeKAj5az6gTnv5FYfKJm8e589YvRs",
-		authDomain: "drafttool-f2f9b.firebaseapp.com",
-		databaseURL: "https://drafttool-f2f9b-default-rtdb.firebaseio.com",
-		projectId: "drafttool-f2f9b",
-		storageBucket: "drafttool-f2f9b.firebasestorage.app",
-		messagingSenderId: "278017861725",
-		appId: "1:278017861725:web:02dc39753e8f254cd985b4"
+  apiKey: "AIzaSyAD5SLeKAj5az6gTnv5FYfKJm8e589YvRs",
+  authDomain: "drafttool-f2f9b.firebaseapp.com",
+  databaseURL: "https://drafttool-f2f9b-default-rtdb.firebaseio.com",
+  projectId: "drafttool-f2f9b",
+  storageBucket: "drafttool-f2f9b.firebasestorage.app",
+  messagingSenderId: "278017861725",
+  appId: "1:278017861725:web:02dc39753e8f254cd985b4"
     };
 
     if (!firebase.apps.length) {
@@ -416,7 +427,7 @@
       db.ref(`rooms/${state.roomId}/revealIndex`).set(nextIndex);
     });
 
-    // ホスト: くじ引きをトリガー (全員リアルタイム同期)
+    // ホスト: くじ引きをトリガー
     document.getElementById('btn-start-lottery').addEventListener('click', () => {
       if (!state.isHost || !state.roomData) return;
       const data = state.roomData;
@@ -426,7 +437,6 @@
       const dupPlayers = playerNames.filter(name => data.players[name]?.currentPick === currentAnnouncedPick);
       const winner = dupPlayers[Math.floor(Math.random() * dupPlayers.length)];
 
-      // 1. くじ引きアニメーション開始
       db.ref(`rooms/${state.roomId}/lotteryState`).set({
         status: 'drawing',
         target: currentAnnouncedPick,
@@ -434,7 +444,6 @@
         dupPlayers: dupPlayers
       });
 
-      // 2. 1.8秒後に紙が開く演出へ
       setTimeout(() => {
         db.ref(`rooms/${state.roomId}/lotteryState/status`).set('opening');
       }, 1800);
@@ -468,7 +477,7 @@
       db.ref(`rooms/${state.roomId}`).update(updates);
     });
 
-    // UI更新（完全同期）
+    // UI更新
     function updateUI(data) {
       document.getElementById('display-round-status').textContent = `第 ${data.round} 巡 選択希望選手`;
       
@@ -516,7 +525,7 @@
         stageDupAlert.classList.add('hidden');
       }
 
-      // くじ引きリアルタイム演出
+      // くじ引き演出
       const lotState = data.lotteryState || {};
       const drawingPhase = document.getElementById('lottery-drawing-phase');
       const paperPhase = document.getElementById('lottery-paper-phase');
@@ -534,13 +543,11 @@
         document.getElementById('lottery-target-display').textContent = lotState.target || '---';
         document.getElementById('winner-name-display').textContent = lotState.winner || '---';
 
-        // 3D用紙オープン演出
         setTimeout(() => {
           paperElement.classList.remove('closed');
           paperElement.classList.add('open');
         }, 100);
 
-        // 外れたプレイヤーを再指名モードへ
         if (state.isHost && lotState.dupPlayers) {
           lotState.dupPlayers.forEach(pName => {
             if (pName !== lotState.winner) {
